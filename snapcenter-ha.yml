@@ -1,0 +1,313 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: CloudFormation template to create and configure to health check for Snapcenter and failover to secondary in case of primary outage
+
+Parameters:
+  SnapcenterDestinationCidrBlock:
+    Type: String
+    Description: Snapcenter destination CIDR block
+  SnapcenterInstanceId01:
+    Type: String
+    Description: Snapcenter instance ID 01
+  SnapcenterInstanceId02:
+    Type: String
+    Description: Snapcenter instance ID 02
+  SnapcenterPrimaryInstanceId:
+    Type: String
+    Description: Snapcenter primary instance ID
+  RouteTableId:
+    Type: String
+    Description: Route table ID
+  VPCId:
+    Type: String
+    Description: VPC ID
+  PrivateSubnetId01:
+    Type: String
+    Description: Private subnet ID 01
+  PrivateSubnetId02:
+    Type: String
+    Description: Private subnet ID 02
+  SecurityGroupId:
+    Type: String
+    Description: Security group ID
+  CreateVPCEndpoints:
+    Type: String
+    Description: "Specify whether to create VPC endpoints for EC2, SSM, SSMMessages, EC2Messages, Lambda (Yes or No)? Select No if these VPC endpoints already exists for the VPC"
+    AllowedValues:
+      - "Yes"
+      - "No"
+    Default: "Yes"
+  LambdaS3BucketName:
+    Type: String
+    Description: Lambda S3 bucket name
+  SnapcenterFailoverLambdaZipS3Key:
+    Type: String
+    Description: Snapcenter failover lambda zip S3 key
+    Default: "lambda/failover.zip"
+  SnapcenterHealthCheckLambdaZipS3Key:
+    Type: String
+    Description: Snapcenter healthcheck lambda zip S3 key
+    Default: "lambda/healthcheck.zip"
+
+Conditions:
+  CreateVPCEndpointsCondition: !Equals [!Ref CreateVPCEndpoints, "Yes"]
+
+Resources:
+  SnapcenterDestinationCidrBlockParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /snapcenter/ha/destination_cidr_block
+      Type: String
+      Value: !Ref SnapcenterDestinationCidrBlock
+
+  SnapcenterInstanceId01Param:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /snapcenter/ha/instance_id_01
+      Type: String
+      Value: !Ref SnapcenterInstanceId01
+
+  SnapcenterInstanceId02Param:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /snapcenter/ha/instance_id_02
+      Type: String
+      Value: !Ref SnapcenterInstanceId02
+
+  SnapcenterPrimaryInstanceIdParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /snapcenter/ha/primary_instance_id
+      Type: String
+      Value: !Ref SnapcenterPrimaryInstanceId
+
+  RouteTableIdParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /snapcenter/ha/route_table_id
+      Type: String
+      Value: !Ref RouteTableId
+                
+
+  SnapcenterFailoverLambdaExecutionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: "snapcenter-failover-lambda-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "lambda.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/AmazonSSMReadOnlyAccess"
+        - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+      Policies:
+        - PolicyName: "CustomPolicy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: "EC2"
+                Effect: "Allow"
+                Action:
+                  - "ec2:ReplaceRoute"
+                  - "ec2:CreateRoute"
+                  - "ec2:CreateNetworkInterface"
+                  - "ec2:DescribeNetworkInterfaces"
+                  - "ec2:DeleteNetworkInterface"
+                Resource: "*"
+              - Sid: "SSM"
+                Effect: "Allow"
+                Action:
+                  - "ssm:GetParameter"
+                  - "ssm:PutParameter"
+                Resource: "*"
+
+  SnapcenterHealthCheckLambdaExecutionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: "snapcenter-healthcheck-lambda-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "lambda.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/AmazonSSMFullAccess"
+        - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+      Policies:
+        - PolicyName: "CustomPolicyWithFullAccess"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: "EC2"
+                Effect: "Allow"
+                Action:
+                  - "ec2:ReplaceRoute"
+                  - "ec2:CreateRoute"
+                  - "ec2:CreateNetworkInterface"
+                  - "ec2:DescribeNetworkInterfaces"
+                  - "ec2:DeleteNetworkInterface"
+                Resource: "*"
+              - Sid: "SSM"
+                Effect: "Allow"
+                Action:
+                  - "ssm:GetParameter"
+                  - "ssm:PutParameter"
+                  - "ssm:SendCommand"
+                  - "ssm:GetCommandInvocation"
+                Resource: "*"
+              - Sid: "LambdaInvoke"
+                Effect: "Allow"
+                Action:
+                  - "lambda:InvokeFunction"
+                Resource: !GetAtt SnapcenterFailoverLambda.Arn
+
+  SnapcenterFailoverLambda:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: "snapcenter-failover-lambda"
+      Handler: main.lambda_handler
+      Role: !GetAtt SnapcenterFailoverLambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaS3BucketName
+        S3Key: !Ref SnapcenterFailoverLambdaZipS3Key
+      Runtime: python3.8
+      Timeout: 15
+      MemorySize: 128
+      VpcConfig:
+        SubnetIds:
+          - !Ref PrivateSubnetId01
+          - !Ref PrivateSubnetId02
+        SecurityGroupIds:
+          - !Ref SecurityGroupId
+      Environment:
+        Variables:
+          DESTINATION_CIDR_BLOCK: !Ref SnapcenterDestinationCidrBlock
+          INSTANCE_ID_01: !Ref SnapcenterInstanceId01
+          INSTANCE_ID_02: !Ref SnapcenterInstanceId02
+          ROUTE_TABLE_ID: !Ref RouteTableId
+
+  SnapcenterHealthcheckLambda:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: "snapcenter-healthcheck-lambda"
+      Handler: main.lambda_handler
+      Role: !GetAtt SnapcenterHealthCheckLambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaS3BucketName
+        S3Key: !Ref SnapcenterHealthCheckLambdaZipS3Key
+      Runtime: python3.8
+      Timeout: 15
+      MemorySize: 128
+      VpcConfig:
+        SubnetIds:
+          - !Ref PrivateSubnetId01
+          - !Ref PrivateSubnetId02
+        SecurityGroupIds:
+          - !Ref SecurityGroupId
+      Environment:
+        Variables:
+          SNAPCENTER_SERVICE_NAME: AmazonSSMAgent
+
+  VPCEndpointSSM:
+    Type: 'AWS::EC2::VPCEndpoint'
+    Condition: CreateVPCEndpointsCondition
+    Properties:
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ssm'
+      VpcId: !Ref VPCId
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref PrivateSubnetId01
+        - !Ref PrivateSubnetId02
+      SecurityGroupIds:
+        - !Ref SecurityGroupId
+      PrivateDnsEnabled: true
+
+  VPCEndpointSSMMessages:
+    Type: 'AWS::EC2::VPCEndpoint'
+    Condition: CreateVPCEndpointsCondition
+    Properties:
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ssmmessages'
+      VpcId: !Ref VPCId
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref PrivateSubnetId01
+        - !Ref PrivateSubnetId02
+      SecurityGroupIds:
+        - !Ref SecurityGroupId
+      PrivateDnsEnabled: true
+
+  VPCEndpointEC2Messages:
+    Type: 'AWS::EC2::VPCEndpoint'
+    Condition: CreateVPCEndpointsCondition
+    Properties:
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ec2messages'
+      VpcId: !Ref VPCId
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref PrivateSubnetId01
+        - !Ref PrivateSubnetId02
+      SecurityGroupIds:
+        - !Ref SecurityGroupId
+      PrivateDnsEnabled: true
+  
+  VPCEndpointEC2:
+    Type: 'AWS::EC2::VPCEndpoint'
+    Condition: CreateVPCEndpointsCondition
+    Properties:
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ec2'
+      VpcId: !Ref VPCId
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref PrivateSubnetId01
+        - !Ref PrivateSubnetId02
+      SecurityGroupIds:
+        - !Ref SecurityGroupId
+      PrivateDnsEnabled: true
+  VPCEndpointLambda:
+    Type: 'AWS::EC2::VPCEndpoint'
+    Condition: CreateVPCEndpointsCondition
+    Properties:
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.lambda'
+      VpcId: !Ref VPCId
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref PrivateSubnetId01
+        - !Ref PrivateSubnetId02
+      SecurityGroupIds:
+        - !Ref SecurityGroupId
+      PrivateDnsEnabled: true
+
+  SnapcenterHealthCheckCloudWatchRule:
+    Type: 'AWS::Events::Rule'
+    Properties:
+      Name: "snapcenter-healthcheck-rule"
+      ScheduleExpression: "rate(1 minute)"
+      State: "ENABLED"
+      Targets:
+        - Arn: !GetAtt SnapcenterHealthcheckLambda.Arn
+          Id: "SnapcenterHealthcheckLambdaTarget"
+
+  SnapcenterHealthcheckLambdaInvokePermission:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !Ref SnapcenterHealthcheckLambda
+      Principal: 'events.amazonaws.com'
+      SourceArn: !GetAtt SnapcenterHealthCheckCloudWatchRule.Arn
+
+Outputs:
+  SnapcenterFailoverLambdaExecutionRoleArn:
+    Description: "ARN of the IAM role for Snapcenter Failover lambda"
+    Value: !GetAtt SnapcenterFailoverLambdaExecutionRole.Arn
+
+  SnapcenterHealthCheckLambdaExecutionRoleArn:
+    Description: "ARN of the IAM role for Snapcenter Health check lambda"
+    Value: !GetAtt SnapcenterHealthCheckLambdaExecutionRole.Arn
