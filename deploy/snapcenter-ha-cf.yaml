@@ -47,6 +47,14 @@ Parameters:
     Type: String
     Description: Snapcenter healthcheck lambda zip S3 key
     Default: "lambda/healthcheck.zip"
+  SnapcenterServiceName:
+    Type: String
+    Description: SnapCenter service name for health check
+    Default: "SnapCenter SMCore Service"
+  MySQLServiceName:
+    Type: String
+    Description: MySQL service name for health check
+    Default: "MySQL57"
 
 Conditions:
   CreateVPCEndpointsCondition: !Equals [!Ref CreateVPCEndpoints, "Yes"]
@@ -179,7 +187,7 @@ Resources:
         S3Bucket: !Ref LambdaS3BucketName
         S3Key: !Ref SnapcenterFailoverLambdaZipS3Key
       Runtime: python3.8
-      Timeout: 15
+      Timeout: 60
       MemorySize: 128
       VpcConfig:
         SubnetIds:
@@ -204,7 +212,7 @@ Resources:
         S3Bucket: !Ref LambdaS3BucketName
         S3Key: !Ref SnapcenterHealthCheckLambdaZipS3Key
       Runtime: python3.8
-      Timeout: 15
+      Timeout: 120
       MemorySize: 128
       VpcConfig:
         SubnetIds:
@@ -214,7 +222,9 @@ Resources:
           - !Ref SecurityGroupId
       Environment:
         Variables:
-          SNAPCENTER_SERVICE_NAME: AmazonSSMAgent
+          SNAPCENTER_SERVICE_NAME: !Ref SnapcenterServiceName
+          MYSQL_SERVICE_NAME: !Ref MySQLServiceName
+          SNAPCENTER_FAILOVER_LAMBDA_NAME: !Ref SnapcenterFailoverLambda
 
   VPCEndpointSSM:
     Type: 'AWS::EC2::VPCEndpoint'
@@ -289,7 +299,7 @@ Resources:
     Type: 'AWS::Events::Rule'
     Properties:
       Name: "snapcenter-healthcheck-rule"
-      ScheduleExpression: "rate(1 minute)"
+      ScheduleExpression: "rate(2 minutes)"
       State: "ENABLED"
       Targets:
         - Arn: !GetAtt SnapcenterHealthcheckLambda.Arn
