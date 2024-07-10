@@ -11,9 +11,9 @@ Copyright: 2024 NetApp Inc.
 ## Features
 The solution provides the following features:
 
-* Continuous health check of SnapCenter primary server
-* Automatic failover to secondary SnapCenter server incase of an outage
-* Perform manual failback
+* Continuous health check of the SnapCenter server service
+* Automatic failover to secondary SnapCenter server incase of primary outage
+* Perform manual failback using the lambda function
 
 ## Pre-requisites
 Before you begin, ensure that the following prerequisites are met: 
@@ -24,11 +24,11 @@ Before you begin, ensure that the following prerequisites are met:
     ```
     # ipconfig /all
     ```
-  2.	Add virtual IP with subnet (same as your primary subnet) to the primary network interface using netsh command
+  2.	Add virtual IP (let’s say 2.2.2.2) with subnet (same as your primary subnet, let’s say 255.255.255.0) to the primary network interface using netsh command
   ```
   # netsh interface ip add address “Ethernet” 2.2.2.2 255.255.255.0
   ```
-  3. Update consumer Route table to point to primary instance's network interface for the configured Virtual IP
+  3. Update Route table to point to primary instance for the configured Virtual IP
 * Disable source/destination check on SnapCenter EC2 instances
   1.	Login to AWS EC2 dashboard console
   2.	Select the SnapCenter HA server instances, click on Actions -> Networking -> Change source/destination check -> select stop -> save (or)
@@ -39,9 +39,9 @@ Before you begin, ensure that the following prerequisites are met:
 
 * EC2 instances attached with instance IAM role with "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore" or similar permissions
 
-## Solution Architecture
-Note : The solution workflow is based on references from the blog [Making Application Failover Seamless by Failing Over Your Private Virtual IP Across Availability Zones](https://aws.amazon.com/de/blogs/apn/making-application-failover-seamless-by-failing-over-your-private-virtual-ip-across-availability-zones/)
+Note: This solution is created based on the approach mentioned in this AWS blog - https://aws.amazon.com/de/blogs/apn/making-application-failover-seamless-by-failing-over-your-private-virtual-ip-across-availability-zones/
 
+## Solution Architecture
 ![architecture](./assets/architecture.jpeg)
 
 ### Components
@@ -49,8 +49,8 @@ Note : The solution workflow is based on references from the blog [Making Applic
     - Monitors the status of the SnapCenter service of the primary server every 1 minute by using AWS Systems Manager RunCommand service
     - Triggers Failover lambda incase of primary outage
     - Relies on a SSM parameter "/snapcenter/ha/primary_instance_id"
-2. #### Failover lambda :
-    - Updates the consumer Route table with the Virtual IP to point to the secondary server's network interface
+2. Failover lambda :
+    - Updates the consumers Route table (ideally public route table) with the Virtual IP CIDR to point to the secondary server's network interface
     - After successful failover, it updates the "/snapcenter/ha/primary_instance_id" SSM parameter to reflect the current primary server
 
 
