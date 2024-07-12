@@ -77,17 +77,21 @@ MySQL replication is a feature of MySQL Server that enables you to replicate dat
 Configure MySQL HA by running the following PowerShell cmdlets on designated primary SnapCenter EC2 instance:
 
 Add-SmServerCluster -ClusterName <Cluster_Name> -ClusterIP <Cluster_IP> -PrimarySCServerIP <Node_1_IP_Address> -Verbose -Credential <Domain\User>
+
 ![snapcenter-create-cluster](./assets/sc-create-cluster.png)
 
 Add-SmServer -ServerIP <Node_2_IP_Address> -Verbose -Credential <Domain\User>
+
 ![snapcenter-add-secondary](./assets/sc-add-secondary.png)
 
 Run the below cmdlet to verify the state of HA configuration:
+
 ![snapcenter-job-status](./assets/sc-job-status.png)
 
 ![snapcenter-job-log](./assets/sc-job-log.png)
 
 Get-SmServerConfig
+
 ![snapcenter-cluster-health-status](./assets/sc-cluster-health-status.png)
 
 For information on how to run the cmdlets, see SnapCenter Software PowerShell Command Reference Guide.
