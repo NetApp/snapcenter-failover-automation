@@ -77,12 +77,18 @@ MySQL replication is a feature of MySQL Server that enables you to replicate dat
 Configure MySQL HA by running the following PowerShell cmdlets on designated primary SnapCenter EC2 instance:
 
 Add-SmServerCluster -ClusterName <Cluster_Name> -ClusterIP <Cluster_IP> -PrimarySCServerIP <Node_1_IP_Address> -Verbose -Credential <Domain\User>
+![snapcenter-create-cluster](./assets/sc-create-cluster.png)
 
 Add-SmServer -ServerIP <Node_2_IP_Address> -Verbose -Credential <Domain\User>
+![snapcenter-add-secondary](./assets/sc-add-secondary.png)
 
 Run the below cmdlet to verify the state of HA configuration:
+![snapcenter-job-status](./assets/sc-job-status.png)
+
+![snapcenter-job-log](./assets/sc-job-log.png)
 
 Get-SmServerConfig
+![snapcenter-cluster-health-status](./assets/sc-cluster-health-status.png)
 
 For information on how to run the cmdlets, see SnapCenter Software PowerShell Command Reference Guide.
 
@@ -103,6 +109,81 @@ Note : This solution is created based on the approach mentioned in this AWS blog
 2. #### Failover lambda :
     - Updates the consumers Route table with the Virtual IP to point to the secondary SnapCenter EC2 instance
     - After successful failover, it updates the "/snapcenter/ha/primary_instance_id" SSM parameter to reflect the current primary server
+3. #### IAM Roles, permissions
+  * ##### Health check lambda role
+    ![healthcheck-lambda-role](./assets/healthcheck-lambda-role.png)
+
+    CustomPolicy
+    ```
+    {
+      "Version": "2012-10-17",
+      "Statement": [
+          {
+              "Action": [
+                  "ec2:ReplaceRoute",
+                  "ec2:CreateRoute",
+                  "ec2:CreateNetworkInterface",
+                  "ec2:DescribeNetworkInterfaces",
+                  "ec2:DeleteNetworkInterface"
+              ],
+              "Resource": "*",
+              "Effect": "Allow",
+              "Sid": "EC2"
+          },
+          {
+              "Action": [
+                  "ssm:GetParameter",
+                  "ssm:PutParameter",
+                  "ssm:SendCommand",
+                  "ssm:GetCommandInvocation"
+              ],
+              "Resource": "*",
+              "Effect": "Allow",
+              "Sid": "SSM"
+          },
+          {
+              "Action": [
+                  "lambda:InvokeFunction"
+              ],
+              "Resource":   "arn:aws:lambda:us-west-2:982589175402:function:snap  center-failover-lambda",
+              "Effect": "Allow",
+              "Sid": "LambdaInvoke"
+          }
+      ]
+    } 
+    ```
+  * ##### Failover lambda role
+    ![failover-lambda-role](./assets/failover-lambda-role.png)
+
+    CustomPolicy
+    ```
+    {
+      "Version": "2012-10-17",
+      "Statement": [
+          {
+              "Action": [
+                  "ec2:ReplaceRoute",
+                  "ec2:CreateRoute",
+                  "ec2:CreateNetworkInterface",
+                  "ec2:DescribeNetworkInterfaces",
+                  "ec2:DeleteNetworkInterface"
+              ],
+              "Resource": "*",
+              "Effect": "Allow",
+              "Sid": "EC2"
+          },
+          {
+              "Action": [
+                  "ssm:GetParameter",
+                  "ssm:PutParameter"
+              ],
+              "Resource": "*",
+              "Effect": "Allow",
+              "Sid": "SSM"
+          }
+      ]
+    }
+    ```
 
 ## Deployment Guide
 #### Step 1 : Clone the GitHub repository

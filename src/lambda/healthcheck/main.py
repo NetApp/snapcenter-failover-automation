@@ -43,6 +43,21 @@ def check_service_status(ssm, instance_id, snapcenter_service_name, mysql_servic
 
     return snapcenter_service_status, mysql_service_status
 
+def check_instance_health(ec2, instance_id):
+    # Describe instance status
+    response = ec2.describe_instance_status(InstanceIds=[instance_id])
+    logger.info("Instance status response: %s", response)
+
+    # Check if instance status and system status are both 'ok'
+    if response['InstanceStatuses']:
+        instance_status = response['InstanceStatuses'][0]['InstanceStatus']['Status']
+        system_status = response['InstanceStatuses'][0]['SystemStatus']['Status']
+        logger.info(f"Instance status: {instance_status}, System status: {system_status}")
+        return instance_status == 'ok' and system_status == 'ok'
+    else:
+        logger.info(f"No status found for instance {instance_id}")
+        return False
+
 def lambda_handler(event, context):
     logger.info("Received event: %s", event)
 
@@ -53,9 +68,10 @@ def lambda_handler(event, context):
     target_lambda_function_name = os.environ.get('SNAPCENTER_FAILOVER_LAMBDA_NAME', 'snapcenter-failover-lambda')
 
     try:
-        # Initialize a session using Amazon SSM, Lambda
+        # Initialize a session using Amazon SSM, Lambda, and EC2
         ssm = boto3.client('ssm')
         lambda_client = boto3.client('lambda')
+        ec2 = boto3.client('ec2')
 
         # Retrieve the instance ID from SSM Parameter Store
         response = ssm.get_parameter(Name=ssm_parameter_name, WithDecryption=True)
@@ -66,6 +82,13 @@ def lambda_handler(event, context):
         # Retry mechanism
         max_retries = 3
         for attempt in range(max_retries):
+            # Check instance health
+            if not check_instance_health(ec2, instance_id):
+                logger.info(f"Attempt {attempt + 1}/{max_retries}: Instance {instance_id} is not healthy.")
+                time.sleep(10)  # Wait before retrying
+                continue
+
+            # Check service status
             snapcenter_service_status, mysql_service_status = check_service_status(ssm, instance_id, snapcenter_service_name, mysql_service_name)
 
             if snapcenter_service_status == 'Running' and mysql_service_status == 'Running':
